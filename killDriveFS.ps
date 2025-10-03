@@ -1,0 +1,22 @@
+﻿$processName = 'GoogleDriveFS'
+$timeOutSecs = 2
+
+# Get all existing processes of interest.
+$processes = Get-Process -ErrorAction Ignore -Name $processName
+
+if (-not $processes) {
+  Write-Verbose -Verbose "No $processName processes running."
+} else {
+  # Ask the processes to terminate, which they may or may not do.
+  taskkill.exe /im "$processName.exe" *>$null 
+  try { 
+   # Wait for up to $timeOutSecs seconds for the processes to - 
+   # potentially - terminate gracefully.
+   $processes | Wait-Process -ErrorAction Stop -Timeout $timeOutSecs
+  } catch {
+    Write-Warning "Forcefully terminating (remaining) $processName processes..."
+    # Note: This assumes that you don't care about any new 
+    #       processes that may have launched since Get-Process was called.
+    $processes | Stop-Process -Force
+  }
+}
