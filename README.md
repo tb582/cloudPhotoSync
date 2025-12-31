@@ -27,6 +27,18 @@ PowerShell automation that coordinates rclone with Google Drive File Stream to k
 4. Ensure your rclone remote (`remote:` by default) points at the desired source.
 5. Run the sync in **dry-run mode** first (see below) to verify paths and permissions.
 
+## Configuration Wizard
+
+Run the interactive wizard to capture your paths and options:
+
+```powershell
+pwsh -File .\Start-SyncWizard.ps1
+```
+
+- The wizard pre-fills values from `userConfig.sample.ps1` and your last saved answers.
+- When you finish, the tool writes `userConfig.ps1` (or a custom path) and can optionally launch `pcloud_sync.ps1`.
+- You can rerun the wizard any time to update paths or switch between dry-run/live defaults.
+
 ## Running the Sync
 
 ```powershell
@@ -44,16 +56,26 @@ pwsh -File .\pcloud_sync.ps1
 - `-DryRun`: Force dry-run regardless of the configuration file.
 - `-LiveRun`: Force a live run even if the configuration file enables dry-run.
 - `-SkipProcessControl`: Skip stopping and starting Google Drive File Stream — handy for automated tests.
+- `-SkipDedupe`: Skip the deduplication step (useful for quick smoke tests).
+- `-DedupePath <path>`: Run dedupe against a specific remote subpath (handy for testing small folders with spaces).
+- `-FailOnRcloneError`: Throw on rclone failures instead of logging and continuing.
 
 ## Logs and Output
 
 - The log destinations are defined in `userConfig.ps1`. By default they write under the directory referenced by `$syncRoot`.
 - Each run produces a timestamped dedupe log and appends to the main log.
+- Logs are truncated at startup when they exceed `$Global:LogMaxBytes` (defaults to 50MB; override in `userConfig.ps1`).
 - Windows Event Log entries are written under the log name specified by `$global:LogName` (defaults to `pcloud_rclone`).
 
 ## Tests
 
 Run `pwsh -File tests\Invoke-DryRun.ps1` to execute a guarded dry run. The helper exits early if `userConfig.ps1` is missing and always passes `-SkipProcessControl` so Google Drive File Stream stays untouched.
+
+Example with scoped dedupe:
+
+```powershell
+pwsh -File tests\Invoke-DryRun.ps1 -DedupePath "My Pictures/Tests"
+```
 
 ## Troubleshooting
 

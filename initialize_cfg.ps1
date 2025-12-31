@@ -16,25 +16,32 @@ function Initialize-Configuration {
     # Set console encoding - needed due to specific issue
     [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+    $isDesktop = $PSVersionTable.PSEdition -eq 'Desktop'
+    $isWindowsPlatform = $isDesktop -or ($IsWindows -eq $true)
+
     # Initialize logging framework - check and create event log if needed
-    try {
-        if (-not [System.Diagnostics.EventLog]::SourceExists($Global:EventSource)) {
-            New-EventLog -LogName $Global:LogName -Source $Global:EventSource
-            Write-Log -Level INFO -Message "Event source '$Global:EventSource' created successfully."
-        } else {
-            # Validate the event log source
-            $eventLog = Get-WmiObject -Query "SELECT * FROM Win32_NTEventLogFile WHERE LogfileName='$($Global:LogName)'"
-            if (-not $eventLog) {
-                Write-Log -Level WARNING -Message "Event source '$Global:EventSource' exists, but log '$Global:LogName' does not. Recreating event source."
-                Remove-EventLog -Source $Global:EventSource
+    if ($isWindowsPlatform -and $isDesktop) {
+        try {
+            if (-not [System.Diagnostics.EventLog]::SourceExists($Global:EventSource)) {
                 New-EventLog -LogName $Global:LogName -Source $Global:EventSource
-                Write-Log -Level INFO -Message "Event source '$Global:EventSource' recreated successfully."
+                Write-Log -Level INFO -Message "Event source '$Global:EventSource' created successfully."
             } else {
-                Write-Log -Level INFO -Message "Event source '$Global:EventSource' and log '$Global:LogName' are valid."
+                # Validate the event log source
+                $eventLog = Get-CimInstance -ClassName Win32_NTEventLogFile -Filter "LogfileName='$($Global:LogName)'"
+                if (-not $eventLog) {
+                    Write-Log -Level WARNING -Message "Event source '$Global:EventSource' exists, but log '$Global:LogName' does not. Recreating event source."
+                    Remove-EventLog -Source $Global:EventSource
+                    New-EventLog -LogName $Global:LogName -Source $Global:EventSource
+                    Write-Log -Level INFO -Message "Event source '$Global:EventSource' recreated successfully."
+                } else {
+                    Write-Log -Level INFO -Message "Event source '$Global:EventSource' and log '$Global:LogName' are valid."
+                }
             }
+        } catch {
+            Write-Log -Level ERROR -Message "Failed to initialize event log source '$Global:EventSource': $_ `nskipping and moving to log file"
         }
-    } catch {
-        Write-Log -Level ERROR -Message "Failed to initialize event log source '$Global:EventSource': $_ `nskipping and moving to log file"
+    } else {
+        Write-Log -Level INFO -Message "Skipping Windows Event Log initialization for PowerShell $($PSVersionTable.PSEdition)."
     }
 
     Write-Log -Level INFO -Message "**** Script initialization complete ****"

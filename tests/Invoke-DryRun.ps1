@@ -1,12 +1,24 @@
 [CmdletBinding()]
 param(
-    [string]$ConfigPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'userConfig.ps1'),
-    [string]$RemoteName = 'remote'
+    [string]$ConfigPath,
+    [string]$RemoteName = 'remote',
+    [string]$DedupePath,
+    [switch]$SkipDedupe
 )
 
 $ErrorActionPreference = 'Stop'
-$rootPath = Split-Path -Parent $PSScriptRoot
+$scriptRoot = if ($PSScriptRoot) {
+    $PSScriptRoot
+} elseif ($PSCommandPath) {
+    Split-Path -Parent $PSCommandPath
+} else {
+    $PWD.Path
+}
+$rootPath = Split-Path -Parent $scriptRoot
 $syncScript = Join-Path $rootPath 'pcloud_sync.ps1'
+if (-not $PSBoundParameters.ContainsKey('ConfigPath')) {
+    $ConfigPath = Join-Path $rootPath 'userConfig.ps1'
+}
 
 if (-not (Test-Path $syncScript)) {
     throw "Unable to locate pcloud_sync.ps1 at '$syncScript'."
@@ -17,12 +29,24 @@ if (-not (Test-Path $ConfigPath)) {
     return
 }
 
+if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
+    throw "rclone executable not found on PATH. Install rclone or add it to PATH before running the dry-run test."
+}
+
 try {
     $syncParams = @{
         ConfigPath         = $ConfigPath
         RemoteName         = $RemoteName
         DryRun             = $true
         SkipProcessControl = $true
+        FailOnRcloneError  = $true
+    }
+
+    if ($PSBoundParameters.ContainsKey('DedupePath') -and -not [string]::IsNullOrWhiteSpace($DedupePath)) {
+        $syncParams.DedupePath = $DedupePath
+    }
+    if ($SkipDedupe) {
+        $syncParams.SkipDedupe = $true
     }
 
     & $syncScript @syncParams

@@ -122,8 +122,51 @@ function Write-Log {
     }
 }
 
+function Truncate-LogIfLarge {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LogFilePath,
+        [Parameter(Mandatory = $true)]
+        [long]$MaxBytes
+    )
+
+    if (-not (Test-Path $LogFilePath)) { return }
+    try {
+        $fileInfo = Get-Item -Path $LogFilePath -ErrorAction Stop
+        if ($fileInfo.Length -gt $MaxBytes) {
+            Clear-Content -Path $LogFilePath -ErrorAction Stop
+            Write-Log -Level WARNING -Message "Truncated log file $LogFilePath (was $($fileInfo.Length) bytes; max $MaxBytes)."
+        }
+    } catch {
+        Write-Log -Level ERROR -Message "Failed to truncate log file ${LogFilePath}: $($_.Exception.Message)"
+    }
+}
+
+function Truncate-LogsIfNeeded {
+    if (-not $Global:LogMaxBytes) {
+        $Global:LogMaxBytes = 50MB
+    }
+
+    $LogFileVariables = @(
+        $Global:LogFile,
+        $Global:LargeFileLog,
+        $Global:ConsolidatedLogFile,
+        $Global:FilePathLogRemoteListing,
+        $Global:FilePathLogProdMD5,
+        $Global:FilePathLogProdCopy,
+        $Global:FilePathLogDuplicates,
+        $Global:StdOutFilePath,
+        $Global:StdErrFilePath
+    )
+
+    foreach ($logFilePath in $LogFileVariables) {
+        if ([string]::IsNullOrWhiteSpace($logFilePath)) { continue }
+        Truncate-LogIfLarge -LogFilePath $logFilePath -MaxBytes $Global:LogMaxBytes
+    }
+}
 
 
 # Start by validating all necessary log paths
 Validate-AllLogFiles
+Truncate-LogsIfNeeded
 

@@ -4,7 +4,10 @@ param(
     [string]$RemoteName = 'remote',
     [switch]$DryRun,
     [switch]$LiveRun,
-    [switch]$SkipProcessControl
+    [switch]$SkipProcessControl,
+    [switch]$SkipDedupe,
+    [string]$DedupePath,
+    [switch]$FailOnRcloneError
 )
 
 if ($PSBoundParameters.ContainsKey('ConfigPath')) {
@@ -41,6 +44,14 @@ Write-Log -Level INFO -Message "`n`n`nStarting ps_syncNew via rclone and PowerSh
 
 # Initialize configuration
 Initialize-Configuration
+
+# Ensure rclone is available before starting any sync operations
+$rcloneCommand = Get-Command rclone -ErrorAction SilentlyContinue
+if (-not $rcloneCommand) {
+    $message = 'rclone executable not found on PATH. Install rclone or add it to PATH before running.'
+    Write-Log -Level ERROR -Message $message
+    throw $message
+}
 
 # Stop Google Drive File Stream (GDFS) if needed
 if ($SkipProcessControl) {
@@ -93,6 +104,9 @@ if ($rcloneResult.Succeeded) {
     # The final log file output is already captured in Execute-RcloneCommand if needed
 } else {
     Write-Log -Level ERROR -Message "rclone command failed after $maxRetries attempts. Exit Code: $($rcloneResult.ExitCode)"
+    if ($FailOnRcloneError) {
+        throw "rclone ls failed after $maxRetries attempts. Exit Code: $($rcloneResult.ExitCode)"
+    }
 }
 $endTime = Get-Date
 $elapsedTime = $endTime - $startTime
@@ -131,126 +145,145 @@ Write-Log "End of special file handling moving to check for duplicates"
 ## End of special handling 
 
 ## Deduplication process on the remote files
-# Deduplication step
-Write-Log -Level INFO -Message "Starting deduplication process on $remoteNameNormalized..."
+if ($SkipDedupe) {
+    Write-Log -Level INFO -Message "SkipDedupe specified: skipping deduplication step."
+} else {
+    # Deduplication step
+    $dedupeTarget = $remoteNameNormalized
+    if (-not [string]::IsNullOrWhiteSpace($DedupePath)) {
+        $trimmedPath = $DedupePath.Trim()
+        if ($trimmedPath.StartsWith($remoteNameNormalized, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $dedupeTarget = $trimmedPath
+        } else {
+            $trimmedPath = $trimmedPath.TrimStart('/', '\')
+            $dedupeTarget = "$remoteNameNormalized$trimmedPath"
+        }
+    }
 
-# Define deduplication parameters
-$dedupeCommand = "dedupe"
-$dedupeArguments = "--by-hash --dedupe-mode newest $remoteNameNormalized $dryRunFlag $global:MaxAgeFlag"
-$dedupeLogFile = $Global:FilePathLogDuplicates
-$progressInterval = 15
-$maxRetries = 3
+    Write-Log -Level INFO -Message "Starting deduplication process on $dedupeTarget..."
 
-# Log Elapsed Time
-$startTime = Get-Date
+    # Define deduplication parameters
+    $dedupeCommand = "dedupe"
+    $dedupeTargetQuoted = '"' + $dedupeTarget + '"'
+    $dedupeArguments = "--by-hash --dedupe-mode newest $dedupeTargetQuoted $dryRunFlag $global:MaxAgeFlag"
+    $dedupeLogFile = $Global:FilePathLogDuplicates
+    $progressInterval = 15
+    $maxRetries = 3
 
-# Run the deduplication task using Execute-RcloneCommand
-$dedupeResult = Execute-RcloneCommand -Command $dedupeCommand -Arguments $dedupeArguments -LogFile $Global:LogFile -RcloneLogFilePath $dedupeLogFile -ProgressInterval $progressInterval -MaxRetries $maxRetries
+    # Log Elapsed Time
+    $startTime = Get-Date
 
-$endTime = Get-Date
-$elapsedTime = $endTime - $startTime
-Write-Log -Level INFO -Message "Deduplication process completed in $($elapsedTime.TotalSeconds) seconds."
+    # Run the deduplication task using Execute-RcloneCommand
+    $dedupeResult = Execute-RcloneCommand -Command $dedupeCommand -Arguments $dedupeArguments -LogFile $Global:LogFile -RcloneLogFilePath $dedupeLogFile -ProgressInterval $progressInterval -MaxRetries $maxRetries
 
-# Check if the rclone task succeeded 
+    $endTime = Get-Date
+    $elapsedTime = $endTime - $startTime
+    Write-Log -Level INFO -Message "Deduplication process completed in $($elapsedTime.TotalSeconds) seconds."
 
-# $dedupeResult = @{ # Simulating success for testing
-#    Succeeded = $true  # Simulating success for testing
-# }# Simulating success for testing
+    # Check if the rclone task succeeded 
 
-if ($dedupeResult.Succeeded) {
-    # Parse the deduplication log file to analyze duplicates # Simulating success for testing
-#    $dedupeLogFile = "P:\scripts\log_duplicates_20241115_204255.txt" # Simulating success for testing
+    # $dedupeResult = @{ # Simulating success for testing
+    #    Succeeded = $true  # Simulating success for testing
+    # }# Simulating success for testing
 
-    if (Test-Path $dedupeLogFile) {
-        try {
-            # Initialize counters
-            $totalDuplicateFiles = 0
-            $totalStorageSavedBytes = 0
+    if ($dedupeResult.Succeeded) {
+        # Parse the deduplication log file to analyze duplicates # Simulating success for testing
+    #    $dedupeLogFile = "P:\scripts\log_duplicates_20241115_204255.txt" # Simulating success for testing
 
-            # Regex patterns
-            $duplicatePattern = "Found (\d+) files with duplicate md5 hashes"
-            $sizePattern = "Skipped delete as --dry-run is set \(size ([\d\.]+)([KMGT]i)?\)"
+        if (Test-Path $dedupeLogFile) {
+            try {
+                # Initialize counters
+                $totalDuplicateFiles = 0
+                $totalStorageSavedBytes = 0
 
-            # Process duplicate counts
-            $duplicateMatches = Select-String -Path $dedupeLogFile -Pattern $duplicatePattern
-            if ($duplicateMatches) {
-                $totalDuplicateFiles = $duplicateMatches |
-                    ForEach-Object {
-                        # Extract the number of duplicates and subtract 1 (n - 1 files deleted)
-                        [int]$_.Matches[0].Groups[1].Value - 1
-                    } |
-                    Measure-Object -Sum | Select-Object -ExpandProperty Sum
-            }
+                # Regex patterns
+                $duplicatePattern = "Found (\d+) files with duplicate md5 hashes"
+                $sizePattern = "Skipped delete as --dry-run is set \(size ([\d\.]+)([KMGT]i)?\)"
 
-            # Process skipped file sizes
-            if ($Global:DryRun) {
-                $sizeMatches = Select-String -Path $dedupeLogFile -Pattern $sizePattern
-                if ($sizeMatches) {
-                    $totalStorageSavedBytes = $sizeMatches |
+                # Process duplicate counts
+                $duplicateMatches = Select-String -Path $dedupeLogFile -Pattern $duplicatePattern
+                if ($duplicateMatches) {
+                    $totalDuplicateFiles = $duplicateMatches |
                         ForEach-Object {
-                            # Extract the size and unit (e.g., Ki, Mi, Gi, Ti)
-                            $sizeValue = [float]$_.Matches[0].Groups[1].Value
-                            $sizeUnit = $_.Matches[0].Groups[2].Value
-
-                            # Convert sizes to bytes based on unit
-                            switch ($sizeUnit) {
-                                "Ki" { $sizeValue * 1024 }
-                                "Mi" { $sizeValue * 1024 * 1024 }
-                                "Gi" { $sizeValue * 1024 * 1024 * 1024 }
-                                "Ti" { $sizeValue * 1024 * 1024 * 1024 * 1024 }
-                                default { $sizeValue }  # Bytes (no unit)
-                            }
+                            # Extract the number of duplicates and subtract 1 (n - 1 files deleted)
+                            [int]$_.Matches[0].Groups[1].Value - 1
                         } |
                         Measure-Object -Sum | Select-Object -ExpandProperty Sum
+                }
+
+                # Process skipped file sizes
+                if ($Global:DryRun) {
+                    $sizeMatches = Select-String -Path $dedupeLogFile -Pattern $sizePattern
+                    if ($sizeMatches) {
+                        $totalStorageSavedBytes = $sizeMatches |
+                            ForEach-Object {
+                                # Extract the size and unit (e.g., Ki, Mi, Gi, Ti)
+                                $sizeValue = [float]$_.Matches[0].Groups[1].Value
+                                $sizeUnit = $_.Matches[0].Groups[2].Value
+
+                                # Convert sizes to bytes based on unit
+                                switch ($sizeUnit) {
+                                    "Ki" { $sizeValue * 1024 }
+                                    "Mi" { $sizeValue * 1024 * 1024 }
+                                    "Gi" { $sizeValue * 1024 * 1024 * 1024 }
+                                    "Ti" { $sizeValue * 1024 * 1024 * 1024 * 1024 }
+                                    default { $sizeValue }  # Bytes (no unit)
+                                }
+                            } |
+                            Measure-Object -Sum | Select-Object -ExpandProperty Sum
+                    } else {
+                        Write-Log -Level WARNING -Message "No size information found in deduplication log. This may occur if no deletions were skipped."
+                        $totalStorageSavedBytes = 0
+                    }
                 } else {
-                    Write-Log -Level WARNING -Message "No size information found in deduplication log. This may occur if no deletions were skipped."
+                    Write-Log -Level INFO -Message "Skipping size calculation as this is not a dry-run. Size information is not logged by rclone when --dry-run is not set."
                     $totalStorageSavedBytes = 0
                 }
-            } else {
-                Write-Log -Level INFO -Message "Skipping size calculation as this is not a dry-run. Size information is not logged by rclone when --dry-run is not set."
-                $totalStorageSavedBytes = 0
-            }
 
-            # Log results
-            if ($totalDuplicateFiles -gt 0) {
-                Write-Log -Level INFO -Message "Deduplication completed: $totalDuplicateFiles duplicate files identified for removal."
+                # Log results
+                if ($totalDuplicateFiles -gt 0) {
+                    Write-Log -Level INFO -Message "Deduplication completed: $totalDuplicateFiles duplicate files identified for removal."
 
-                # Convert total saved bytes to a human-readable format
-                if ($Global:DryRun) {
-                    $totalSaved = if ($totalStorageSavedBytes -ge 1024 * 1024 * 1024) {
-                        "{0:N2} GiB" -f ($totalStorageSavedBytes / (1024 * 1024 * 1024))
-                    } elseif ($totalStorageSavedBytes -ge 1024 * 1024) {
-                        "{0:N2} MiB" -f ($totalStorageSavedBytes / (1024 * 1024))
-                    } elseif ($totalStorageSavedBytes -ge 1024) {
-                        "{0:N2} KiB" -f ($totalStorageSavedBytes / 1024)
-                    } else {
-                        "{0:N2} Bytes" -f $totalStorageSavedBytes
+                    # Convert total saved bytes to a human-readable format
+                    if ($Global:DryRun) {
+                        $totalSaved = if ($totalStorageSavedBytes -ge 1024 * 1024 * 1024) {
+                            "{0:N2} GiB" -f ($totalStorageSavedBytes / (1024 * 1024 * 1024))
+                        } elseif ($totalStorageSavedBytes -ge 1024 * 1024) {
+                            "{0:N2} MiB" -f ($totalStorageSavedBytes / (1024 * 1024))
+                        } elseif ($totalStorageSavedBytes -ge 1024) {
+                            "{0:N2} KiB" -f ($totalStorageSavedBytes / 1024)
+                        } else {
+                            "{0:N2} Bytes" -f $totalStorageSavedBytes
+                        }
                     }
-                }
-                if ($Global:DryRun) {
-                    Write-Log -Level INFO -Message "Dry-run mode: Estimated storage savings: $totalSaved."
+                    if ($Global:DryRun) {
+                        Write-Log -Level INFO -Message "Dry-run mode: Estimated storage savings: $totalSaved."
+                    } else {
+                        Write-Log -Level INFO -Message "Storage savings: $totalSaved after removing duplicates."
+                    }
                 } else {
-                    Write-Log -Level INFO -Message "Storage savings: $totalSaved after removing duplicates."
+                    Write-Log -Level INFO -Message "No duplicates were found or deduplication was already completed."
                 }
-            } else {
-                Write-Log -Level INFO -Message "No duplicates were found or deduplication was already completed."
-            }
 
-        } catch {
-            # Handle errors in parsing or processing the log
-            Write-Log -Level ERROR -Message "Error parsing deduplication log file '$dedupeLogFile': $_"
+            } catch {
+                # Handle errors in parsing or processing the log
+                Write-Log -Level ERROR -Message "Error parsing deduplication log file '$dedupeLogFile': $_"
+            }
+        } else {
+            # Handle case where the deduplication log file is missing
+            Write-Log -Level ERROR -Message "Deduplication log file '$dedupeLogFile' not found. Cannot process duplicate counts."
         }
     } else {
-        # Handle case where the deduplication log file is missing
-        Write-Log -Level ERROR -Message "Deduplication log file '$dedupeLogFile' not found. Cannot process duplicate counts."
+        # Handle rclone deduplication task failure
+        Write-Log -Level ERROR -Message "Deduplication process failed. Check logs for details."
+        if ($FailOnRcloneError) {
+            throw "rclone dedupe failed. Exit Code: $($dedupeResult.ExitCode)"
+        }
+        Exit 1  # Exit the script with a failure code
     }
-} else {
-    # Handle rclone deduplication task failure
-    Write-Log -Level ERROR -Message "Deduplication process failed. Check logs for details."
-    Exit 1  # Exit the script with a failure code
-}
 
-Write-Log -Level INFO -Message "Deduplication process completed." 
+    Write-Log -Level INFO -Message "Deduplication process completed." 
+}
 
 # ---------------------------------------
 # Step: Generate and Validate Remote Hash Sums
@@ -273,6 +306,9 @@ try {
     # Ensure the command succeeded
     if (-not $result.Succeeded) {
         Write-Log -Level ERROR -EventID 101 -Message "Rclone hashsum did not complete successfully. Exit code: $($result.ExitCode)."
+        if ($FailOnRcloneError) {
+            throw "rclone hashsum failed. Exit Code: $($result.ExitCode)"
+        }
         Exit 1
     }
     $endTime = Get-Date
@@ -285,14 +321,12 @@ try {
         Write-Log -Level ERROR -EventID 101 -Message "Rclone hashsum did not return any valid results. Check the logs and remote configuration."
         Exit 1
     }
-    Write-Host "Before logging Rclone hashsum completion."
     Write-Log -Level INFO -Message "Rclone hashsum operation completed successfully in $($elapsedTime.TotalSeconds) seconds.`nFound $($remoteFiles.Count) new file(s)."
 } catch {
     # Handle any unexpected errors during command execution or result processing
     Write-Log -Level ERROR -EventID 102 -Message "An error occurred while executing rclone hashsum: $($_.Exception.Message)"
     Exit 1
 }
-Write-Host "outside of the hashsum try/catch- we should have a completion log line above"
 # $remoteFiles = Get-Content -Path "P:\scripts\rclone_stdout.txt" # testing simulation
 
 # Extract valid MD5 lines and transform to key=value format
@@ -322,11 +356,15 @@ if ($invalidHashLines.Count -gt 0) {
     Write-Log -Level DEBUG -Message "Did not find any paths without valid checksums; continuing"
 }
 
-# If duplicates are found, log and exit
+# If duplicates are found, log and exit (unless dedupe is skipped)
 if ($duplicateKeys.Count -gt 0) {
-    Write-Log -Level ERROR -Message "Duplicate MD5 hashes detected at this stage: $($duplicateKeys.Count)"
-    Write-Log -Level ERROR -Message "This indicates the deduplication step did not complete successfully. Exiting script."
-    Exit 1
+    if ($SkipDedupe) {
+        Write-Log -Level WARNING -Message "Duplicate MD5 hashes detected ($($duplicateKeys.Count)), but SkipDedupe is set. Skipping duplicate enforcement."
+    } else {
+        Write-Log -Level ERROR -Message "Duplicate MD5 hashes detected at this stage: $($duplicateKeys.Count)"
+        Write-Log -Level ERROR -Message "This indicates the deduplication step did not complete successfully. Exiting script."
+        Exit 1
+    }
 }
 
 # Convert the cleaned list to a hashtable
@@ -424,6 +462,9 @@ if ($diffCount -gt 0) {
                         $success = $true
                     } else {
                         Write-Log -Level WARNING -Message "File copy failed for file: $path. Exit Code: $($result.ExitCode). Retrying..."
+                        if ($FailOnRcloneError) {
+                            throw "rclone copy failed for file: $path. Exit Code: $($result.ExitCode)"
+                        }
                     }
                 } else {
                     Write-Log -Level INFO -Message "Dry-run mode: Simulating file copy of $path to $Global:DirectoryLocalPictures."
