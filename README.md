@@ -12,7 +12,7 @@ PowerShell automation that coordinates rclone with Google Drive File Stream to k
 
 - **Windows PowerShell 5.1 or PowerShell 7+**
 - **[rclone](https://rclone.org/downloads/)** installed and configured with a remote (defaults expect it to be called `remote:`)
-- **Google Drive for desktop** (provides the `GoogleDriveFS` process the script pauses)
+- **Google Drive for desktop** (optional; provides the `GoogleDriveFS` process the script pauses)
 - Permission to create/write log files under the configured directory
 
 ## Getting Started
