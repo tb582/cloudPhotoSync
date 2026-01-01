@@ -57,7 +57,7 @@ pwsh -File .\pcloud_sync.ps1
 - `-LiveRun`: Force a live run even if the configuration file enables dry-run.
 - `-SkipProcessControl`: Skip stopping and starting Google Drive File Stream — handy for automated tests.
 - `-SkipDedupe`: Skip the deduplication step (useful for quick smoke tests).
-- `-DedupePath <path>`: Run dedupe against a specific remote subpath (handy for testing small folders with spaces).
+- `-DedupePath <path>`: Run dedupe against a specific remote subpath and scope listing/hashsum to the same path (handy for testing small folders with spaces).
 - `-FailOnRcloneError`: Throw on rclone failures instead of logging and continuing.
 
 ## Logs and Output

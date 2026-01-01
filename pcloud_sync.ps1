@@ -83,12 +83,38 @@ if ($Global:DryRun) {
     Write-Log -Level INFO -Message "Dry-run mode is active. No changes will be made to the filesystem."
 }
 
+# Scope filter files when a dedupe path is provided (useful for small test runs)
+$effectiveRemoteFilter = $Global:FilePathRemoteFilter
+$effectiveHashFilter = $Global:FilePathFilterFile
+if (-not [string]::IsNullOrWhiteSpace($DedupePath)) {
+    $scopePath = $DedupePath.Trim()
+    if ($scopePath.StartsWith($remoteNameNormalized, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $scopePath = $scopePath.Substring($remoteNameNormalized.Length)
+    }
+    $scopePath = $scopePath.TrimStart('/', '\').Replace('\', '/')
+    if (-not [string]::IsNullOrWhiteSpace($scopePath)) {
+        $tempRoot = if ($env:TEMP) { $env:TEMP } else { $PSScriptRoot }
+        $scopeFilterPath = Join-Path $tempRoot ("pcloud_scope_filter_{0}.txt" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+        @(
+            "# Scoped filter for $scopePath",
+            "+ /$scopePath",
+            "+ /$scopePath/**",
+            "- *"
+        ) | Set-Content -Path $scopeFilterPath -Encoding UTF8
+        $effectiveRemoteFilter = $scopeFilterPath
+        $effectiveHashFilter = $scopeFilterPath
+        Write-Log -Level INFO -Message "Scoping remote filters to /$scopePath using $scopeFilterPath."
+    } else {
+        Write-Log -Level WARNING -Message "DedupePath was provided but resolved to an empty scope; using configured filters."
+    }
+}
+
 # Log that the rclone command is starting for the specified file
-Write-Log -Level DEBUG -EventID 4 -Message "Running rclone command against $global:FilePathRemoteFilter"
+Write-Log -Level DEBUG -EventID 4 -Message "Running rclone command against $effectiveRemoteFilter"
 
 # Define parameters for rclone command
 $command = "ls"
-$arguments = "$remoteRootPath --filter-from $global:FilePathRemoteFilter $global:MaxAgeFlag $dryRunFlag"
+$arguments = "$remoteRootPath --filter-from $effectiveRemoteFilter $global:MaxAgeFlag $dryRunFlag"
 $logFile = $Global:LogFile
 $rcloneLogFilePath = $Global:FilePathLogRemoteListing
 $progressInterval = 15
@@ -292,7 +318,7 @@ Write-Log -Level INFO -Message "Starting rclone hashsum operation for $remoteNam
 
 # Define rclone hashsum parameters
 $hashCommand = "hashsum"
-$hashArguments = "MD5 $remoteNameNormalized $dryRunFlag $Global:MaxAgeFlag --filter-from $Global:FilePathFilterFile"
+$hashArguments = "MD5 $remoteNameNormalized $dryRunFlag $Global:MaxAgeFlag --filter-from $effectiveHashFilter"
 
 # Execute the hashsum command
 Write-Log -Level DEBUG -Message "Running rclone hashsum with arguments: rclone $hashArguments"
