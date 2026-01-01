@@ -90,11 +90,18 @@ function Execute-RcloneCommand {
                 $stdoutContent = Get-Content -Path $StdOutFilePath -ErrorAction Stop
             }
 
-            # Read stderr content and log if any errors exist
+            # Read stderr content and log with severity based on exit code
             if (Test-Path $StdErrFilePath) {
                 $stderrContent = Get-Content -Path $StdErrFilePath -ErrorAction Ignore
                 if ($stderrContent) {
-                    Write-Log -Level ERROR -Message "rclone stderr output:`n$stderrContent" -LogFile $LogFile
+                    $stderrLevel = if ($finalExitCode -eq 0) {
+                        "DEBUG"
+                    } elseif ($finalExitCode -eq 3) {
+                        "WARNING"
+                    } else {
+                        "ERROR"
+                    }
+                    Write-Log -Level $stderrLevel -Message "rclone stderr output:`n$stderrContent" -LogFile $LogFile
                 }
             }
 
