@@ -8,7 +8,12 @@
     Write-Log -Level INFO -Message "Attempting to stop $processName..."
 
     # Locate the executable file (used for starting the process later)
-    $processPath = Get-ChildItem "$env:ProgramFiles\Google\Drive File Stream\" -Filter 'GoogleDriveFS.exe' -Recurse | 
+    $driveRoot = Join-Path $env:ProgramFiles 'Google\Drive File Stream'
+    if (-not (Test-Path $driveRoot)) {
+        Write-Log -Level WARNING -Message "Google Drive File Stream not found at $driveRoot. Skipping $processName control."
+        return
+    }
+    $processPath = Get-ChildItem $driveRoot -Filter 'GoogleDriveFS.exe' -Recurse |
         Sort-Object LastWriteTime | Select-Object -Last 1 | Select-Object -ExpandProperty FullName
 
     if (-not $processPath) {
@@ -61,7 +66,12 @@ function Start-GoogleDriveFS {
     $processName = 'GoogleDriveFS'
 
     # Locate the latest executable file for starting the process
-    $processPath = Get-ChildItem "$env:ProgramFiles\Google\Drive File Stream\" -Filter 'GoogleDriveFS.exe' -Recurse | 
+    $driveRoot = Join-Path $env:ProgramFiles 'Google\Drive File Stream'
+    if (-not (Test-Path $driveRoot)) {
+        Write-Log -Level WARNING -Message "Google Drive File Stream not found at $driveRoot. Skipping $processName start."
+        return
+    }
+    $processPath = Get-ChildItem $driveRoot -Filter 'GoogleDriveFS.exe' -Recurse |
         Sort-Object LastWriteTime | Select-Object -Last 1 | Select-Object -ExpandProperty FullName
 
     if (-not $processPath) {
