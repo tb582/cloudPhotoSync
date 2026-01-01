@@ -58,6 +58,7 @@ pwsh -File .\pcloud_sync.ps1
 - `-SkipProcessControl`: Skip stopping and starting Google Drive File Stream — handy for automated tests.
 - `-SkipDedupe`: Skip the deduplication step (useful for quick smoke tests).
 - `-DedupePath <path>`: Run dedupe against a specific remote subpath and scope listing/hashsum to the same path (handy for testing small folders with spaces).
+- `-IgnoreMaxAge`: Disable the max-age filter for the current run (handy for dry-run tests).
 - `-FailOnRcloneError`: Throw on rclone failures instead of logging and continuing.
 
 ## Logs and Output
@@ -82,6 +83,7 @@ pwsh -File tests\Invoke-DryRun.ps1 -DedupePath "My Pictures/Tests"
 - If you see `Configuration file '<path>' not found`, make sure you created `userConfig.ps1` from the provided sample.
 - Run with `$global:DryRun = $true` to collect diagnostic logs without modifying the remote or local filesystem.
 - Review the generated log files for verbose rclone output and elapsed time information.
+- In dry-run mode, the local scan is skipped if the configured local directory does not exist; live runs still fail fast.
 
 ## Contributing
 

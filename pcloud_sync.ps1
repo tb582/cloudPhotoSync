@@ -7,6 +7,7 @@ param(
     [switch]$SkipProcessControl,
     [switch]$SkipDedupe,
     [string]$DedupePath,
+    [switch]$IgnoreMaxAge,
     [switch]$FailOnRcloneError
 )
 
@@ -44,6 +45,12 @@ Write-Log -Level INFO -Message "`n`n`nStarting ps_syncNew via rclone and PowerSh
 
 # Initialize configuration
 Initialize-Configuration
+
+# Allow test runs to bypass the max-age filter.
+if ($IgnoreMaxAge) {
+    $Global:MaxAgeFlag = ''
+    Write-Log -Level INFO -Message "IgnoreMaxAge specified: disabling max-age filtering for this run."
+}
 
 # Ensure rclone is available before starting any sync operations
 $rcloneCommand = Get-Command rclone -ErrorAction SilentlyContinue
@@ -532,24 +539,36 @@ if ($diffCount -gt 0) {
 
 
 # Ensure local files are processed correctly
-# Normalize the local user profile path so hashes store portable paths
-$userProfileNormalized = ''
-if ($env:USERPROFILE) {
-    $normalizedProfile = $env:USERPROFILE.TrimEnd([char]92, '/')
-    if ($normalizedProfile) {
-        $userProfileNormalized = ($normalizedProfile + '/').Replace([char]92, '/')
+$localRoot = $Global:DirectoryLocalPictures
+if (-not (Test-Path $localRoot)) {
+    if ($Global:DryRun) {
+        Write-Log -Level WARNING -Message "Local directory '$localRoot' not found. Skipping local file scan for dry-run."
+        $localFiles = @()
+        $localCount = 0
+    } else {
+        Write-Log -Level ERROR -Message "Local directory '$localRoot' not found. Aborting."
+        Exit 1
     }
-}
-$localFiles = Get-ChildItem $Global:DirectoryLocalPictures -Recurse -File |
-    Get-FileHash -Algorithm MD5 | ForEach-Object {
-        $normalizedPath = $_.Path.Replace([char]92, '/')
-        if ($userProfileNormalized) {
-            $normalizedPath = $normalizedPath.Replace($userProfileNormalized, '$HOME/')
+} else {
+    # Normalize the local user profile path so hashes store portable paths
+    $userProfileNormalized = ''
+    if ($env:USERPROFILE) {
+        $normalizedProfile = $env:USERPROFILE.TrimEnd([char]92, '/')
+        if ($normalizedProfile) {
+            $userProfileNormalized = ($normalizedProfile + '/').Replace([char]92, '/')
         }
-        '{0}  {1}' -f $_.Hash.ToLower(), $normalizedPath
     }
+    $localFiles = Get-ChildItem $localRoot -Recurse -File |
+        Get-FileHash -Algorithm MD5 | ForEach-Object {
+            $normalizedPath = $_.Path.Replace([char]92, '/')
+            if ($userProfileNormalized) {
+                $normalizedPath = $normalizedPath.Replace($userProfileNormalized, '$HOME/')
+            }
+            '{0}  {1}' -f $_.Hash.ToLower(), $normalizedPath
+        }
 
-$localCount = $localFiles | Measure-Object | Select-Object -expand Count
+    $localCount = $localFiles | Measure-Object | Select-Object -expand Count
+}
 
 if ($localCount -ge $diffCount) {
     Write-Log -Level INFO -EventID 555 -Message "All files copied to local - preparing to update MD5 sum CSV."

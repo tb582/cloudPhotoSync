@@ -3,7 +3,8 @@ param(
     [string]$ConfigPath,
     [string]$RemoteName = 'remote',
     [string]$DedupePath,
-    [switch]$SkipDedupe
+    [switch]$SkipDedupe,
+    [switch]$IgnoreMaxAge = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +49,7 @@ try {
     if ($SkipDedupe) {
         $syncParams.SkipDedupe = $true
     }
+    $syncParams.IgnoreMaxAge = $IgnoreMaxAge
 
     & $syncScript @syncParams
     Write-Host 'Dry run completed successfully.'
