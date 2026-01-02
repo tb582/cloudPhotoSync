@@ -198,7 +198,16 @@ if ($SkipDedupe) {
     # Define deduplication parameters
     $dedupeCommand = "dedupe"
     $dedupeTargetQuoted = '"' + $dedupeTarget + '"'
-    $dedupeArguments = "--by-hash --dedupe-mode newest $dedupeTargetQuoted $dryRunFlag $global:MaxAgeFlag"
+    $dedupeFilterPath = $null
+    if (-not [string]::IsNullOrWhiteSpace($DedupePath) -and $effectiveRemoteFilter -and (Test-Path $effectiveRemoteFilter)) {
+        $dedupeFilterPath = $effectiveRemoteFilter
+    } elseif ($Global:FilePathDedupeFilter -and (Test-Path $Global:FilePathDedupeFilter)) {
+        $dedupeFilterPath = $Global:FilePathDedupeFilter
+    } elseif ($effectiveRemoteFilter -and (Test-Path $effectiveRemoteFilter)) {
+        $dedupeFilterPath = $effectiveRemoteFilter
+    }
+    $dedupeFilterArg = if ($dedupeFilterPath) { "--filter-from $dedupeFilterPath" } else { "" }
+    $dedupeArguments = "--by-hash --dedupe-mode newest $dedupeTargetQuoted $dedupeFilterArg $dryRunFlag $global:MaxAgeFlag"
     $dedupeLogFile = $Global:FilePathLogDuplicates
     $progressInterval = 15
     $maxRetries = 3

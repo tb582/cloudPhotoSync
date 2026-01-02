@@ -9,6 +9,8 @@ $global:FilePathMD5Sum          = Join-Path $syncRoot 'md5.sum'
 $global:FilePathLastRun         = Join-Path $syncRoot 'lastrun.txt'
 # Rclone filter file that limits which remote objects are considered (see README).
 $global:FilePathRemoteFilter    = Join-Path $syncRoot 'remote_filter.txt'
+# Optional dedupe filter file to exclude known noisy folders (see README).
+$global:FilePathDedupeFilter    = Join-Path $syncRoot 'dedupe_filter.txt'
 $global:FilePathLogRemoteListing = Join-Path $syncRoot 'log_remote_listing.txt'
 $global:FilePathFilterFile      = Join-Path $syncRoot 'filter-file.txt'
 $global:FilePathLogProdMD5      = Join-Path $syncRoot 'log_prod_md5.txt'

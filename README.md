@@ -22,6 +22,7 @@ PowerShell automation that coordinates rclone with Google Drive File Stream to k
 3. Edit `userConfig.ps1` and update:
    - `$syncRoot` and all derived log/output paths
    - `$global:FilePathRemoteFilter` (rclone filter file that scopes which remote folders to process)
+   - `$global:FilePathDedupeFilter` (optional filter file for dedupe-only exclusions)
    - `$global:DirectoryLocalPictures` (local destination for synced media)
    - Optional flags such as `$global:DryRun` and `$global:Bootstrap`
 4. Ensure your rclone remote (`remote:` by default) points at the desired source.
@@ -67,6 +68,21 @@ pwsh -File .\pcloud_sync.ps1
 - Each run produces a timestamped dedupe log and appends to the main log.
 - Logs are truncated at startup when they exceed `$Global:LogMaxBytes` (defaults to 50MB; override in `userConfig.ps1`).
 - Windows Event Log entries are written under the log name specified by `$global:LogName` (defaults to `pcloud_rclone`).
+
+## Dedupe Filtering
+
+If you want dedupe to skip noisy folders (for example `.git` or `venv`), create a dedupe filter file and set `$global:FilePathDedupeFilter` in `userConfig.ps1`. This filter is used only by the dedupe step and does not affect listing or hashsum.
+
+Example `dedupe_filter.txt`:
+
+```text
+- /.git/**
+- /.git_backup/**
+- /venv/**
+- /__pycache__/**
+- /node_modules/**
+- /System Volume Information/**
+```
 
 ## Tests
 
