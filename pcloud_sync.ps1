@@ -43,6 +43,17 @@ Write-Log -Level INFO -Message "Using remote $remoteNameNormalized"
 
 Write-Log -Level INFO -Message "`n`n`nStarting ps_syncNew via rclone and PowerShell"
 
+# Catch unhandled errors and log them for diagnostics.
+trap {
+    $errorMessage = $_.Exception.Message
+    try {
+        Write-Log -Level ERROR -Message "Unhandled error: $errorMessage"
+    } catch {
+        Write-Error "Unhandled error: $errorMessage"
+    }
+    throw
+}
+
 # Initialize configuration
 Initialize-Configuration
 
@@ -398,10 +409,12 @@ if ($invalidHashLines.Count -gt 0) {
     Write-Log -Level DEBUG -Message "Did not find any paths without valid checksums; continuing"
 }
 
-# If duplicates are found, log and exit (unless dedupe is skipped)
+# If duplicates are found, log and exit (unless dedupe is skipped or dry-run is set)
 if ($duplicateKeys.Count -gt 0) {
     if ($SkipDedupe) {
         Write-Log -Level WARNING -Message "Duplicate MD5 hashes detected ($($duplicateKeys.Count)), but SkipDedupe is set. Skipping duplicate enforcement."
+    } elseif ($Global:DryRun) {
+        Write-Log -Level WARNING -Message "Duplicate MD5 hashes detected ($($duplicateKeys.Count)) during dry-run. Skipping duplicate enforcement."
     } else {
         Write-Log -Level ERROR -Message "Duplicate MD5 hashes detected at this stage: $($duplicateKeys.Count)"
         Write-Log -Level ERROR -Message "This indicates the deduplication step did not complete successfully. Exiting script."
@@ -410,7 +423,29 @@ if ($duplicateKeys.Count -gt 0) {
 }
 
 # Convert the cleaned list to a hashtable
-$remoteFileHash = $remoteFileHashEntries -join "`n" | ConvertFrom-StringData
+if ($duplicateKeys.Count -gt 0 -and ($SkipDedupe -or $Global:DryRun)) {
+    $remoteFileHash = @{}
+    $duplicateEntriesDropped = 0
+    foreach ($entry in $remoteFileHashEntries) {
+        if ($entry -match '^(?<MD5>[^=]+)=(?<FilePath>.+)$') {
+            if (-not $remoteFileHash.ContainsKey($matches['MD5'])) {
+                $remoteFileHash[$matches['MD5']] = $matches['FilePath']
+            } else {
+                $duplicateEntriesDropped++
+            }
+        }
+    }
+    if ($duplicateEntriesDropped -gt 0) {
+        Write-Log -Level WARNING -Message "Dropped $duplicateEntriesDropped duplicate hash entries while building hashtable (dry-run/skip-dedupe)."
+    }
+} else {
+    try {
+        $remoteFileHash = $remoteFileHashEntries -join "`n" | ConvertFrom-StringData
+    } catch {
+        Write-Log -Level ERROR -Message "Failed to parse remote hash list: $($_.Exception.Message)"
+        throw
+    }
+}
 
 # Log success
 Write-Log -Level INFO -Message "Successfully converted remote file hash data to a hashtable with $($remoteFileHash.Count) entries."
