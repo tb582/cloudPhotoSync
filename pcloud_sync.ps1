@@ -24,17 +24,18 @@ if ($PSBoundParameters.ContainsKey('ConfigPath')) {
 
 $ErrorActionPreference = "Stop"
 
-if ($DryRun -and $LiveRun) {
-    throw "Specify only one of -DryRun or -LiveRun."
-}
-
-if ($DryRun) {
+$dryRunExplicit = $PSBoundParameters.ContainsKey('DryRun')
+$liveRunExplicit = $PSBoundParameters.ContainsKey('LiveRun')
+if ($dryRunExplicit -and $liveRunExplicit) {
+    Write-Log -Level WARNING -Message "Both -DryRun and -LiveRun were supplied; honoring -LiveRun."
+    $Global:DryRun = $false
+} elseif ($dryRunExplicit) {
     $Global:DryRun = $true
-}
-
-if ($LiveRun) {
+} elseif ($liveRunExplicit) {
     $Global:DryRun = $false
 }
+
+Validate-LocalDestination
 
 $remoteNameNormalized = if ($RemoteName.EndsWith(':')) { $RemoteName } else { "${RemoteName}:" }
 $remoteRootPath = "$remoteNameNormalized/"
@@ -47,6 +48,11 @@ Write-Log -Level INFO -Message "`n`n`nStarting ps_syncNew via rclone and PowerSh
 trap {
     $errorMessage = $_.Exception.Message
     try {
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) {
+            Stop-ActiveRcloneProcess -Reason 'Ctrl+C'
+        } else {
+            Stop-ActiveRcloneProcess -Reason 'script error'
+        }
         Write-Log -Level ERROR -Message "Unhandled error: $errorMessage"
     } catch {
         Write-Error "Unhandled error: $errorMessage"
@@ -57,6 +63,9 @@ trap {
 # Initialize configuration
 Initialize-Configuration
 
+# Clean up any rclone processes left behind by previous runs.
+Stop-OrphanedRcloneProcesses -Reason 'startup cleanup'
+
 # Allow test runs to bypass the max-age filter.
 if ($IgnoreMaxAge) {
     $Global:MaxAgeFlag = ''
@@ -64,11 +73,17 @@ if ($IgnoreMaxAge) {
 }
 
 # Ensure rclone is available before starting any sync operations
-$rcloneCommand = Get-Command rclone -ErrorAction SilentlyContinue
-if (-not $rcloneCommand) {
+$rclonePath = Resolve-RclonePath
+if (-not $rclonePath) {
     $message = 'rclone executable not found on PATH. Install rclone or add it to PATH before running.'
     Write-Log -Level ERROR -Message $message
     throw $message
+}
+$Global:RclonePath = $rclonePath
+if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
+    Write-Log -Level WARNING -Message "rclone not found on PATH; using '$rclonePath'."
+} else {
+    Write-Log -Level INFO -Message "Using rclone at '$rclonePath'."
 }
 
 # Stop Google Drive File Stream (GDFS) if needed
@@ -504,6 +519,20 @@ if ($diffCount -gt 0) {
 if ($diffCount -gt 0) {
     Write-Log -Level INFO -Message "Starting file synchronization process for $($diffCount) file(s)."
 
+    $localRoot = $Global:DirectoryLocalPictures
+    if ([string]::IsNullOrWhiteSpace($localRoot)) {
+        Write-Log -Level ERROR -Message "Local destination path is empty. Check DirectoryLocalPictures in your config."
+        Exit 1
+    }
+    if (-not (Test-Path $localRoot)) {
+        if ($Global:DryRun) {
+            Write-Log -Level WARNING -Message "Local directory '$localRoot' not found. Dry-run will continue."
+        } else {
+            Write-Log -Level ERROR -Message "Local directory '$localRoot' not found. Aborting."
+            Exit 1
+        }
+    }
+
     # Write file paths to include file for reference
     if ($Global:DryRun) {
         Write-Log -Level INFO -Message "Dry-run mode: Simulating include file generation. File paths will not actually be copied."
@@ -532,7 +561,7 @@ if ($diffCount -gt 0) {
                 # Perform file copy operation (or simulate if in dry-run mode)
                 if (-not $Global:DryRun) {
                     Write-Log -Level INFO -Message "Initiating rclone copy for file: $path (iteration: $loopCounter, attempt: $($retryCount + 1))."
-                    $result = Execute-RcloneCommand -Command "copy" -Arguments "$remoteNameNormalized""$path"" $Global:DirectoryLocalPictures --no-traverse --progress" -RcloneLogFilePath $Global:FilePathLogProdCopy
+                    $result = Execute-RcloneCommand -Command "copy" -Arguments "$remoteNameNormalized""$path"" ""$localRoot"" --no-traverse --progress" -RcloneLogFilePath $Global:FilePathLogProdCopy
 
                     if ($result.Succeeded) {
                         Write-Log -Level INFO -Message "Successfully copied file: $path."

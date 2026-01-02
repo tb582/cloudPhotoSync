@@ -1,5 +1,102 @@
 # rclone_cfg.ps1
 
+function Resolve-RclonePath {
+    $rcloneCommand = Get-Command rclone -ErrorAction SilentlyContinue
+    if ($rcloneCommand) { return $rcloneCommand.Source }
+
+    $candidatePaths = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        $candidatePaths += Join-Path $env:USERPROFILE 'scoop\apps\rclone\current\rclone.exe'
+    } else {
+        Write-Warning 'USERPROFILE is not set; skipping Scoop rclone path lookup.'
+    }
+    $candidatePaths += @(
+        'C:\ProgramData\chocolatey\bin\rclone.exe',
+        'C:\Program Files\rclone\rclone.exe',
+        'C:\Program Files\Rclone\rclone.exe'
+    )
+    foreach ($candidate in $candidatePaths) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    }
+
+    $wingetRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'
+    if (Test-Path $wingetRoot) {
+        $wingetMatch = Get-ChildItem -Path $wingetRoot -Directory -Filter 'Rclone.Rclone_*' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($wingetMatch) {
+            $rcloneExe = Get-ChildItem -Path $wingetMatch.FullName -Filter 'rclone.exe' -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($rcloneExe) { return $rcloneExe.FullName }
+        }
+    }
+
+    return $null
+}
+
+function Stop-ActiveRcloneProcess {
+    param([string]$Reason = 'cancellation')
+
+    $rclonePid = $Global:CurrentRclonePid
+    if (-not $rclonePid) { return }
+    try {
+        $running = Get-Process -Id $rclonePid -ErrorAction SilentlyContinue
+        if ($running) {
+            Write-Log -Level WARNING -Message "Stopping rclone process (PID: $rclonePid) due to $Reason."
+            Stop-Process -Id $rclonePid -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Log -Level WARNING -Message "Failed to stop rclone process (PID: $rclonePid): $($_.Exception.Message)"
+    } finally {
+        $Global:CurrentRclonePid = $null
+    }
+}
+
+function Stop-OrphanedRcloneProcesses {
+    param([string]$Reason = 'startup cleanup')
+
+    $logMarkers = @()
+    $logMarkers += @(
+        $Global:FilePathLogRemoteListing,
+        $Global:FilePathLogProdMD5,
+        $Global:FilePathLogProdCopy,
+        $Global:FilePathLogDuplicates
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object { "*$($_)*" }
+
+    if (-not [string]::IsNullOrWhiteSpace($Global:FilePathLogDuplicates)) {
+        $dedupeDir = Split-Path -Parent $Global:FilePathLogDuplicates
+        if (-not [string]::IsNullOrWhiteSpace($dedupeDir)) {
+            $logMarkers += "*$dedupeDir*log_duplicates_*"
+        }
+    }
+
+    $logMarkers = $logMarkers | Select-Object -Unique
+    if ($logMarkers.Count -eq 0) { return }
+
+    $processes = Get-CimInstance Win32_Process -Filter "Name = 'rclone.exe'" -ErrorAction SilentlyContinue
+    if (-not $processes) { return }
+
+    foreach ($process in $processes) {
+        $commandLine = $process.CommandLine
+        if ([string]::IsNullOrWhiteSpace($commandLine)) { continue }
+        $matches = $false
+        foreach ($marker in $logMarkers) {
+            if ($commandLine -like $marker) {
+                $matches = $true
+                break
+            }
+        }
+        if (-not $matches) { continue }
+
+        try {
+            Write-Log -Level WARNING -Message "Stopping orphaned rclone process (PID: $($process.ProcessId)) due to $Reason."
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Log -Level WARNING -Message "Failed to stop orphaned rclone process (PID: $($process.ProcessId)): $($_.Exception.Message)"
+        }
+    }
+}
+
 function Execute-RcloneCommand {
     param (
         [string]$Command,
@@ -34,10 +131,12 @@ function Execute-RcloneCommand {
         $lastProgressTime = $startTime
 
         try {
+            $rcloneExecutable = if ($Global:RclonePath) { $Global:RclonePath } else { 'rclone' }
             # Start the rclone process with redirected output
-            $process = Start-Process -FilePath "rclone" -ArgumentList "$Command $FullArguments" `
+            $process = Start-Process -FilePath $rcloneExecutable -ArgumentList "$Command $FullArguments" `
                 -NoNewWindow -Wait -PassThru -RedirectStandardOutput $StdOutFilePath -RedirectStandardError $StdErrFilePath
             $rclonePID = $process.Id
+            $Global:CurrentRclonePid = $rclonePID
             Write-Log -Level INFO -Message "Started rclone process with PID: $rclonePID" -LogFile $LogFile
 
             # Monitoring loop
@@ -142,6 +241,9 @@ function Execute-RcloneCommand {
             if ($process -and -not $process.HasExited) {
                 Write-Log -Level WARNING -Message "Cleaning up rclone process (PID: $rclonePID)" -LogFile $LogFile
                 $process.Kill()
+            }
+            if ($Global:CurrentRclonePid -eq $rclonePID) {
+                $Global:CurrentRclonePid = $null
             }
         }
 

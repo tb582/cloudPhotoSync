@@ -30,8 +30,13 @@ if (-not (Test-Path $ConfigPath)) {
     return
 }
 
-if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
+. (Join-Path $rootPath 'rclone_cfg.ps1')
+$rclonePath = Resolve-RclonePath
+if (-not $rclonePath) {
     throw "rclone executable not found on PATH. Install rclone or add it to PATH before running the dry-run test."
+}
+if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
+    Write-Warning "rclone not found on PATH; using '$rclonePath'."
 }
 
 try {

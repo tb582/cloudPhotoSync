@@ -122,6 +122,19 @@ function Write-Log {
     }
 }
 
+function Validate-LocalDestination {
+    $localRoot = $Global:DirectoryLocalPictures
+    if ([string]::IsNullOrWhiteSpace($localRoot)) {
+        Write-Log -Level ERROR -Message "Local destination path is empty. Check DirectoryLocalPictures in your config."
+        Exit 1
+    }
+
+    if (-not (Test-Path $localRoot)) {
+        Write-Log -Level ERROR -Message "Local directory '$localRoot' not found. Aborting."
+        Exit 1
+    }
+}
+
 function Truncate-LogIfLarge {
     param(
         [Parameter(Mandatory = $true)]
