@@ -25,7 +25,7 @@ function Validate-LogFile {
             Write-Host "Creating log file: $LogFilePath"
             try {
                 # Attempt to create the log file
-                $null = "" | Out-File -FilePath $LogFilePath -Append -ErrorAction Stop
+                $null = "" | Out-File -FilePath $LogFilePath -Append -Encoding UTF8 -ErrorAction Stop
                 Write-Host "Successfully created log file: $LogFilePath"
             } catch {
                 # Log detailed error information
@@ -92,7 +92,7 @@ function Write-Log {
 
     # Write to the primary log file
     try {
-        Add-Content -Path $LogFile -Value $logEntry
+        Add-Content -Path $LogFile -Value $logEntry -Encoding UTF8
     } catch {
         if ($ConsoleOutput) { Write-Host "Failed to write to log file: $_" }
     }
@@ -113,7 +113,7 @@ function Write-Log {
         } catch {
             # Log failure to write to Event Log
             $eventLogError = "$(Get-Date -Format "yyyy-MM-dd HH:mm:ss.fffff") [ERROR] Failed to write to Event Log: $_"
-            Add-Content -Path $LogFile -Value $eventLogError
+            Add-Content -Path $LogFile -Value $eventLogError -Encoding UTF8
             if ($ConsoleOutput) { Write-Host $eventLogError }
         }
     } elseif ($ConsoleOutput) {
