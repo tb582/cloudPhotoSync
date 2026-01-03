@@ -41,6 +41,7 @@ $remoteNameNormalized = if ($RemoteName.EndsWith(':')) { $RemoteName } else { "$
 $remoteRootPath = "$remoteNameNormalized/"
 
 Write-Log -Level INFO -Message "Using remote $remoteNameNormalized"
+Write-Log -Level INFO -Message "Local destination: $($Global:DirectoryLocalPictures)"
 
 Write-Log -Level INFO -Message "`n`n`nStarting ps_syncNew via rclone and PowerShell"
 
@@ -487,6 +488,7 @@ $matchCount = $remoteFileHash.Count - $diffCount
 # Log details about the comparison
 Write-Log -Level INFO -Message "Remote hashes matching local hashes: $($matchCount)."
 Write-Log -Level INFO -Message "Remote hashes not found locally (files to be copied): $($diffCount)."
+Write-Log -Level INFO -Message "Remote hash total: $($remoteFileHash.Count). Local hash total: $($localmd5.Count)."
 
 # Log additional debugging details if there's a significant mismatch
 if ($matchCount + $diffCount -ne $remoteFileHash.Count) {
@@ -508,6 +510,12 @@ if ($diffCount -gt 0) {
     # Write the list of files to an include file for rclone sync
     $diffmd5.Value | Out-File -FilePath $Global:FilePathIncludeFile -Encoding UTF8
     Write-Log -Level INFO -Message "Wrote file paths for $($diffCount) file(s) to include file: $Global:FilePathIncludeFile"
+    try {
+        $includeCount = (Get-Content -Path $Global:FilePathIncludeFile -ErrorAction Stop).Count
+        Write-Log -Level INFO -Message "Include file count: $includeCount"
+    } catch {
+        Write-Log -Level WARNING -Message "Failed to read include file '$($Global:FilePathIncludeFile)': $($_.Exception.Message)"
+    }
 } else {
     Write-Log -Level INFO -Message "No differences found. All files are already synced."
 }
@@ -663,6 +671,7 @@ if ($localCount -ge $diffCount) {
     # Completion message
     Write-Log -Level INFO -EventID 9 -Message "Completed."
 } else {
+    Write-Log -Level WARNING -EventID 99 -Message "Copy verification failed: localCount=$localCount, diffCount=$diffCount, localRoot='$localRoot', md5Path='$($Global:FilePathMD5Sum)'."
     if (-not $Global:DryRun) {
         # Actual update of MD5 sum CSV file if not in dry-run mode
         Write-Log -Level INFO -EventID 8 -Message "Writing to MD5 sum CSV file: $Global:FilePathMD5Sum"
